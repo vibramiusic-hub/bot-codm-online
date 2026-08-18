@@ -1,12 +1,11 @@
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, delay } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import readline from 'readline';
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const question = (text) => new Promise((resolve) => rl.question(text, resolve));
+// Configura aquí tu número de teléfono fijo con código de país para que Railway lo lea directamente
+const NUMERO_BOT = "593999045641"; 
 
 async function iniciarBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('sesion_auth');
+    const { state, saveCreds } = await useMultiFileAuthState('autenticación de sesión');
     const sock = makeWASocket({ 
         auth: state, 
         printQRInTerminal: false, 
@@ -17,18 +16,21 @@ async function iniciarBot() {
     sock.ev.on('creds.update', saveCreds);
 
     if (!sock.authState.creds.registered) {
-        await delay(3000);
-        console.clear();
+        await delay(5000);
         console.log("==================================================");
         console.log("⚙️  VINCULACIÓN POR CÓDIGO - CODM BLACK MARKET  ⚙️");
         console.log("==================================================");
-        console.log("📱 Ingresa tu número con código de país (Ej: 593999045641)");
-        const numero = await question('> ');
-        console.log("\n⏳ Generando código de vinculación...");
-        const codigo = await sock.requestPairingCode(numero.trim());
-        console.log(`\n🔑 TU CÓDIGO DE 8 DÍGITOS ES: ${codigo}\n`);
-        console.log("👉 Copia el código anterior.");
-        console.log("👉 Entra a WhatsApp Business -> Dispositivos Vinculados -> Vincular con código.");
+        console.log(`📱 Solicitando código para el número: ${NUMERO_BOT}`);
+        console.log("⏳ Generando código de vinculación...");
+        
+        try {
+            const codigo = await sock.requestPairingCode(NUMERO_BOT.trim());
+            console.log(`\n🔑 TU CÓDIGO DE 8 DÍGITOS ES: ${codigo}\n`);
+            console.log("👉 Copia el código anterior.");
+            console.log("👉 Entra a WhatsApp -> Dispositivos Vinculados -> Vincular con código.");
+        } catch (error) {
+            console.log("❌ Error al solicitar el código:", error.message);
+        }
         console.log("==================================================");
     }
 
