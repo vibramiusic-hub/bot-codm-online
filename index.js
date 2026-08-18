@@ -6,108 +6,214 @@ import makeWASocket, {
 
 import { Boom } from '@hapi/boom';
 
-const NUMERO_BOT = "593999045641";
-const NOMBRE_COMUNIDAD = "CODM BLACK MARKET VERIFIED";
+const NUMERO_BOT = '593999045641';
+const NOMBRE_COMUNIDAD = 'CODM BLACK MARKET VERIFIED';
 
-// Grupos autorizados de la comunidad
-const gruposPermitidos = new Set();
+// IDs confirmados en tus logs de Railway.
+const IDS_AUTORIZADOS_MANUALES = new Set([
+    '120363431795663247@g.us', // Comunidad
+    '120363430541418283@g.us'  // General
+]);
+
+const gruposPermitidos = new Set(IDS_AUTORIZADOS_MANUALES);
 let comunidadId = null;
+let reconnecting = false;
+let refreshTimer = null;
 
 
 // ======================================================
-// NORMALIZAR NOMBRES
+// NORMALIZAR TEXTO
 // ======================================================
 
-function normalizar(texto = "") {
+function normalizar(texto = '') {
     return texto
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
         .trim()
         .toLowerCase();
 }
 
 
 // ======================================================
-// DETECTAR COMUNIDAD Y GRUPOS VINCULADOS
+// EXTRAER TEXTO DEL MENSAJE
+// ======================================================
+
+function extraerTexto(msg) {
+    const message = msg?.message;
+
+    if (!message) {
+        return '';
+    }
+
+    return (
+        message.conversation ||
+        message.extendedTextMessage?.text ||
+        message.imageMessage?.caption ||
+        message.videoMessage?.caption ||
+        message.documentMessage?.caption ||
+        ''
+    );
+}
+
+
+// ======================================================
+// COMPROBAR GRUPO AUTORIZADO
+// ======================================================
+
+function grupoAutorizado(id) {
+    return Boolean(
+        id &&
+        gruposPermitidos.has(id)
+    );
+}
+
+
+// ======================================================
+// DETECTAR COMUNIDAD Y GRUPOS
 // ======================================================
 
 async function detectarComunidad(sock) {
+
     try {
-        const grupos = await sock.groupFetchAllParticipating();
 
-        const nombreBuscado = normalizar(NOMBRE_COMUNIDAD);
+        const grupos =
+            await sock.groupFetchAllParticipating();
 
-        comunidadId = null;
+        const nombreBuscado =
+            normalizar(NOMBRE_COMUNIDAD);
+
+
+        // Conservamos siempre los IDs confirmados
         gruposPermitidos.clear();
 
-        console.log("");
-        console.log("==================================================");
-        console.log("🔎 BUSCANDO COMUNIDAD");
-        console.log("==================================================");
+        for (
+            const id of IDS_AUTORIZADOS_MANUALES
+        ) {
+            gruposPermitidos.add(id);
+        }
 
-        // Buscar la comunidad por nombre
-        for (const id of Object.keys(grupos)) {
-            const grupo = grupos[id];
 
-            console.log(`📋 ${grupo.subject || "Sin nombre"}`);
-            console.log(`🆔 ${id}`);
+        comunidadId = null;
+
+
+        console.log('');
+        console.log(
+            '=================================================='
+        );
+        console.log(
+            '🔎 BUSCANDO COMUNIDAD Y GRUPOS'
+        );
+        console.log(
+            '=================================================='
+        );
+
+
+        for (
+            const id of Object.keys(grupos)
+        ) {
+
+            const grupo =
+                grupos[id];
+
+            const nombre =
+                grupo?.subject ||
+                'Sin nombre';
+
+
+            console.log(
+                `📋 ${nombre}`
+            );
+
+            console.log(
+                `🆔 ${id}`
+            );
+
 
             if (
-                normalizar(grupo.subject || "") ===
+                normalizar(nombre) ===
                 nombreBuscado
             ) {
+
                 comunidadId = id;
 
-                console.log("");
+                gruposPermitidos.add(id);
+
+
                 console.log(
-                    `🏠 COMUNIDAD ENCONTRADA: ${grupo.subject}`
+                    `🏠 COMUNIDAD ENCONTRADA: ${nombre}`
                 );
-                console.log(`🆔 ID: ${id}`);
+
+                console.log(
+                    `🆔 ID: ${id}`
+                );
             }
         }
 
-        // Si encontramos la comunidad,
-        // detectar sus grupos vinculados
+
+        // Buscar grupos vinculados
         if (comunidadId) {
 
-            gruposPermitidos.add(comunidadId);
+            for (
+                const id of Object.keys(grupos)
+            ) {
 
-            for (const id of Object.keys(grupos)) {
-                const grupo = grupos[id];
+                const grupo =
+                    grupos[id];
 
-                if (grupo.linkedParent === comunidadId) {
+
+                if (
+                    grupo?.linkedParent ===
+                    comunidadId
+                ) {
+
                     gruposPermitidos.add(id);
 
+
                     console.log(
-                        `🔗 Grupo vinculado: ${grupo.subject}`
+                        `🔗 GRUPO VINCULADO: ${grupo.subject || id}`
                     );
-                    console.log(`🆔 ${id}`);
+
+                    console.log(
+                        `🆔 ${id}`
+                    );
                 }
             }
+        }
 
-            console.log("");
+
+        console.log('');
+
+        console.log(
+            '✅ GRUPOS AUTORIZADOS:'
+        );
+
+
+        for (
+            const id of gruposPermitidos
+        ) {
+
             console.log(
-                `✅ Grupos autorizados: ${gruposPermitidos.size}`
-            );
-
-        } else {
-
-            console.log("");
-            console.log(
-                "⚠️ NO SE ENCONTRÓ LA COMUNIDAD."
-            );
-
-            console.log(
-                `Busca exactamente: ${NOMBRE_COMUNIDAD}`
+                `   🟢 ${id}`
             );
         }
 
-        console.log("==================================================");
-        console.log("");
+
+        console.log(
+            `✅ Total autorizados: ${gruposPermitidos.size}`
+        );
+
+
+        console.log(
+            '=================================================='
+        );
+
+        console.log('');
+
 
     } catch (error) {
+
         console.error(
-            "❌ Error detectando comunidad:",
+            '❌ Error detectando grupos:',
             error?.message || error
         );
     }
@@ -115,11 +221,78 @@ async function detectarComunidad(sock) {
 
 
 // ======================================================
-// COMPROBAR SI EL GRUPO ESTÁ AUTORIZADO
+// ENVIAR REGLAS
 // ======================================================
 
-function grupoAutorizado(id) {
-    return id && gruposPermitidos.has(id);
+async function enviarReglas(
+    sock,
+    chatId,
+    msg
+) {
+
+    const reglas =
+
+        `🖤 *REGLAS — CODM BLACK MARKET*\n\n` +
+
+        `01 • 🤝 *RESPETO*\n` +
+        `Trata a todos los miembros con respeto. ` +
+        `No se permiten insultos, amenazas, acoso ni conflictos.\n\n` +
+
+        `02 • 🚫 *CERO ESTAFAS*\n` +
+        `Cualquier intento de engaño, comprobante falso ` +
+        `o información falsa será motivo de sanción y expulsión.\n\n` +
+
+        `03 • 📢 *PUBLICACIONES CLARAS*\n` +
+        `Toda publicación debe incluir:\n` +
+        `- Cuenta disponible\n` +
+        `- Precio\n` +
+        `- Características principales\n` +
+        `- Forma de contacto\n\n` +
+
+        `04 • 💰 *NEGOCIA CON RESPONSABILIDAD*\n` +
+        `Antes de pagar, revisa cuidadosamente la información ` +
+        `y acuerda las condiciones del trato.\n\n` +
+
+        `05 • 🔎 *PRUEBAS*\n` +
+        `Cuando sea necesario, solicita pruebas razonables ` +
+        `de lo que se está ofreciendo.\n\n` +
+
+        `06 • 🔐 *PROTEGE TUS DATOS*\n` +
+        `Nunca publiques contraseñas, códigos de verificación, ` +
+        `documentos ni información privada.\n\n` +
+
+        `07 • 🚫 *NO SPAM*\n` +
+        `No inundes el grupo con publicaciones repetidas, ` +
+        `enlaces innecesarios o publicidad no autorizada.\n\n` +
+
+        `08 • ⚠️ *NADA DE SUPLANTACIONES*\n` +
+        `Está prohibido hacerse pasar por otro vendedor, ` +
+        `administrador o miembro.\n\n` +
+
+        `09 • 🛡️ *ADMINISTRACIÓN*\n` +
+        `La administración puede eliminar publicaciones ` +
+        `o expulsar usuarios que incumplan las reglas.\n\n` +
+
+        `10 • 📌 *RESPONSABILIDAD*\n` +
+        `Cada comprador y vendedor debe verificar el trato ` +
+        `antes de realizar cualquier pago.\n\n` +
+
+        `━━━━━━━━━━━━━━━━━━\n\n` +
+
+        `🖤 *CODM BLACK MARKET VERIFIED*\n` +
+        `🔥 Compra • Venta • Intercambio\n` +
+        `🛡️ Respeto • Transparencia • Comunidad`;
+
+
+    await sock.sendMessage(
+        chatId,
+        {
+            text: reglas
+        },
+        {
+            quoted: msg
+        }
+    );
 }
 
 
@@ -129,51 +302,64 @@ function grupoAutorizado(id) {
 
 async function iniciarBot() {
 
-    const { state, saveCreds } =
+    const {
+        state,
+        saveCreds
+    } =
         await useMultiFileAuthState(
-            "autenticacion_sesion"
+            'autenticacion_sesion'
         );
 
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: false,
-        browser: [
-            "Windows",
-            "Chrome",
-            "122.0.0.0"
-        ],
-        defaultQueryTimeoutMs: undefined
-    });
+
+    const sock =
+        makeWASocket({
+
+            auth: state,
+
+            printQRInTerminal: false,
+
+            browser: [
+                'Windows',
+                'Chrome',
+                '122.0.0.0'
+            ],
+
+            defaultQueryTimeoutMs:
+                undefined
+        });
 
 
     // ==================================================
-    // GUARDAR CREDENCIALES
+    // GUARDAR SESIÓN
     // ==================================================
 
     sock.ev.on(
-        "creds.update",
+        'creds.update',
         saveCreds
     );
 
 
     // ==================================================
-    // CÓDIGO DE VINCULACIÓN
+    // VINCULACIÓN
     // ==================================================
 
-    if (!state.creds.registered) {
+    if (
+        !state.creds.registered
+    ) {
 
         await delay(5000);
 
+
         console.log(
-            "=================================================="
+            '=================================================='
         );
 
         console.log(
-            "⚙️ CODM BLACK MARKET - VINCULACIÓN"
+            '⚙️ CODM BLACK MARKET - VINCULACIÓN'
         );
 
         console.log(
-            "=================================================="
+            '=================================================='
         );
 
         console.log(
@@ -181,8 +367,9 @@ async function iniciarBot() {
         );
 
         console.log(
-            "⏳ Generando código..."
+            '⏳ Generando código...'
         );
+
 
         try {
 
@@ -191,29 +378,27 @@ async function iniciarBot() {
                     NUMERO_BOT.trim()
                 );
 
-            console.log("");
+
             console.log(
                 `🔑 CÓDIGO: ${codigo}`
             );
 
             console.log(
-                "👉 WhatsApp → Dispositivos vinculados"
+                '👉 WhatsApp → Dispositivos vinculados → Vincular con código'
             );
 
-            console.log(
-                "👉 Vincular con código"
-            );
 
         } catch (error) {
 
             console.error(
-                "❌ Error generando código:",
+                '❌ Error generando código:',
                 error?.message || error
             );
         }
 
+
         console.log(
-            "=================================================="
+            '=================================================='
         );
     }
 
@@ -223,7 +408,7 @@ async function iniciarBot() {
     // ==================================================
 
     sock.ev.on(
-        "connection.update",
+        'connection.update',
         async (update) => {
 
             const {
@@ -232,83 +417,125 @@ async function iniciarBot() {
             } = update;
 
 
-            if (connection === "open") {
+            if (
+                connection === 'open'
+            ) {
 
-                console.log("");
+                reconnecting = false;
+
+
+                console.log('');
+
                 console.log(
-                    "=================================================="
+                    '=================================================='
                 );
 
                 console.log(
-                    "✅ BOT CONECTADO A WHATSAPP"
+                    '✅ BOT CONECTADO A WHATSAPP'
                 );
 
                 console.log(
-                    "🏠 CODM BLACK MARKET VERIFIED"
+                    `🏠 ${NOMBRE_COMUNIDAD}`
                 );
 
                 console.log(
-                    "=================================================="
+                    '=================================================='
                 );
 
-                // Detectar comunidad automáticamente
-                await detectarComunidad(sock);
 
+                await detectarComunidad(
+                    sock
+                );
+
+
+                if (refreshTimer) {
+                    clearInterval(refreshTimer);
+                }
+
+
+                refreshTimer =
+                    setInterval(
+                        () => {
+
+                            detectarComunidad(
+                                sock
+                            ).catch(
+                                (error) => {
+
+                                    console.error(
+                                        '❌ Error actualizando grupos:',
+                                        error?.message || error
+                                    );
+                                }
+                            );
+
+                        },
+                        60000
+                    );
             }
 
 
-            if (connection === "close") {
+            if (
+                connection === 'close'
+            ) {
+
+                if (refreshTimer) {
+
+                    clearInterval(
+                        refreshTimer
+                    );
+
+                    refreshTimer = null;
+                }
+
+
+                const statusCode =
+                    lastDisconnect?.error
+                        instanceof Boom
+
+                        ? lastDisconnect.error
+                            .output?.statusCode
+
+                        : undefined;
+
 
                 const debeReconectar =
-                    lastDisconnect?.error instanceof Boom
-                        ? lastDisconnect.error.output.statusCode !==
-                          DisconnectReason.loggedOut
-                        : true;
+                    statusCode !==
+                    DisconnectReason.loggedOut;
 
 
-                if (debeReconectar) {
+                if (
+                    debeReconectar &&
+                    !reconnecting
+                ) {
+
+                    reconnecting = true;
+
 
                     console.log(
-                        "🔄 Conexión cerrada."
+                        '🔄 Conexión cerrada. Reconectando en 3 segundos...'
                     );
 
-                    console.log(
-                        "🔄 Reconectando..."
-                    );
+
+                    await delay(3000);
 
                     await iniciarBot();
 
-                } else {
+
+                } else if (
+                    !debeReconectar
+                ) {
 
                     console.log(
-                        "❌ Sesión cerrada."
+                        '❌ Sesión cerrada por WhatsApp.'
                     );
 
                     console.log(
-                        "⚠️ Debes vincular nuevamente."
+                        '⚠️ Debes vincular nuevamente.'
                     );
                 }
             }
         }
-    );
-
-
-    // ==================================================
-    // ACTUALIZAR GRUPOS CADA 60 SEGUNDOS
-    // ==================================================
-
-    setInterval(
-        async () => {
-
-            if (
-                sock.user &&
-                sock.ws?.isOpen
-            ) {
-                await detectarComunidad(sock);
-            }
-
-        },
-        60000
     );
 
 
@@ -317,52 +544,59 @@ async function iniciarBot() {
     // ==================================================
 
     sock.ev.on(
-        "group-participants.update",
+        'group-participants.update',
         async (e) => {
 
-            // Ignorar grupos fuera de la comunidad
-            if (!grupoAutorizado(e.id)) {
-                return;
-            }
+            try {
 
-            if (e.action !== "add") {
-                return;
-            }
-
-
-            for (const p of e.participants) {
-
-                const numero =
-                    p.split("@")[0];
-
-                const mencion =
-                    `@${numero}`;
+                if (
+                    !grupoAutorizado(e.id)
+                ) {
+                    return;
+                }
 
 
-                const mensaje =
-                    `🖤🔥 *¡BIENVENIDO/A A CODM BLACK MARKET!* 🔥🖤\n\n` +
-
-                    `👤 ${mencion}, ya formas parte de nuestra comunidad.\n\n` +
-
-                    `💎 *Compra • Venta • Intercambio de cuentas CODM*\n\n` +
-
-                    `🛡️ Seguridad\n` +
-                    `🤝 Confianza\n` +
-                    `📋 Información clara\n` +
-                    `⚡ Comunidad activa\n\n` +
-
-                    `📜 Antes de publicar, revisa las reglas del grupo.\n\n` +
-
-                    `⚠️ *Recuerda:* verifica siempre la información ` +
-                    `y las condiciones antes de realizar cualquier pago.\n\n` +
-
-                    `🔥 *CODM BLACK MARKET*\n` +
-                    `_Tu próxima cuenta puede estar aquí._\n\n` +
-
-                    `👉 Escribe *!reglas* para leer el reglamento completo.`;
+                if (
+                    e.action !== 'add'
+                ) {
+                    return;
+                }
 
 
-                try {
+                for (
+                    const p of e.participants || []
+                ) {
+
+                    const numero =
+                        p.split('@')[0];
+
+
+                    const mencion =
+                        `@${numero}`;
+
+
+                    const mensaje =
+
+                        `🖤🔥 *¡BIENVENIDO/A A CODM BLACK MARKET!* 🔥🖤\n\n` +
+
+                        `👤 ${mencion}, ya formas parte de nuestra comunidad.\n\n` +
+
+                        `💎 *Compra • Venta • Intercambio de cuentas CODM*\n\n` +
+
+                        `🛡️ Seguridad\n` +
+                        `🤝 Confianza\n` +
+                        `📋 Información clara\n` +
+                        `⚡ Comunidad activa\n\n` +
+
+                        `📜 Antes de publicar, revisa las reglas del grupo.\n\n` +
+
+                        `⚠️ *Recuerda:* verifica siempre la información y las condiciones antes de realizar cualquier pago.\n\n` +
+
+                        `🔥 *CODM BLACK MARKET*\n` +
+                        `_Tu próxima cuenta puede estar aquí._\n\n` +
+
+                        `👉 Escribe *!reglas* para leer el reglamento completo.`;
+
 
                     await sock.sendMessage(
                         e.id,
@@ -371,139 +605,113 @@ async function iniciarBot() {
                             mentions: [p]
                         }
                     );
-
-                } catch (error) {
-
-                    console.error(
-                        "❌ Error enviando bienvenida:",
-                        error?.message || error
-                    );
                 }
+
+
+            } catch (error) {
+
+                console.error(
+                    '❌ Error enviando bienvenida:',
+                    error?.message || error
+                );
             }
         }
     );
 
 
     // ==================================================
-    // COMANDOS
+    // MENSAJES
     // ==================================================
 
     sock.ev.on(
-        "messages.upsert",
+        'messages.upsert',
         async (mUpdate) => {
 
             try {
 
-                const msg =
-                    mUpdate.messages?.[0];
+                const mensajes =
+                    mUpdate.messages || [];
 
 
-                if (
-                    !msg ||
-                    !msg.message ||
-                    msg.key.fromMe
+                for (
+                    const msg of mensajes
                 ) {
-                    return;
-                }
+
+                    if (
+                        !msg?.message ||
+                        msg.key?.fromMe
+                    ) {
+                        continue;
+                    }
 
 
-                const chatId =
-                    msg.key.remoteJid;
+                    const chatId =
+                        msg.key?.remoteJid;
 
 
-                // SOLO grupos de tu comunidad
-                if (
-                    !grupoAutorizado(chatId)
-                ) {
-                    return;
-                }
+                    const text =
+                        extraerTexto(
+                            msg
+                        ).trim();
 
 
-                const text =
-                    msg.message.conversation ||
-                    msg.message.extendedTextMessage?.text ||
-                    "";
-
-
-                const comando =
-                    text.trim().toLowerCase();
-
-
-                // ======================================
-                // !REGLAS
-                // ======================================
-
-                if (comando === "!reglas") {
-
-                    const reglas =
-
-                        `🖤 *REGLAS — CODM BLACK MARKET*\n\n` +
-
-                        `01 • 🤝 *RESPETO*\n` +
-                        `Trata a todos los miembros con respeto. ` +
-                        `No se permiten insultos, amenazas, acoso ni conflictos.\n\n` +
-
-                        `02 • 🚫 *CERO ESTAFAS*\n` +
-                        `Cualquier intento de engaño, comprobante falso ` +
-                        `o información falsa será motivo de sanción y expulsión.\n\n` +
-
-                        `03 • 📢 *PUBLICACIONES CLARAS*\n` +
-                        `Toda publicación debe incluir:\n` +
-                        `- Cuenta disponible\n` +
-                        `- Precio\n` +
-                        `- Características principales\n` +
-                        `- Forma de contacto\n\n` +
-
-                        `04 • 💰 *NEGOCIA CON RESPONSABILIDAD*\n` +
-                        `Antes de pagar, revisa cuidadosamente la información ` +
-                        `y acuerda las condiciones del trato.\n\n` +
-
-                        `05 • 🔎 *PRUEBAS*\n` +
-                        `Cuando sea necesario, solicita pruebas razonables ` +
-                        `de lo que se está ofreciendo.\n\n` +
-
-                        `06 • 🔐 *PROTEGE TUS DATOS*\n` +
-                        `Nunca publiques contraseñas, códigos de verificación, ` +
-                        `documentos ni información privada.\n\n` +
-
-                        `07 • 🚫 *NO SPAM*\n` +
-                        `No inundes el grupo con publicaciones repetidas, ` +
-                        `enlaces innecesarios o publicidad no autorizada.\n\n` +
-
-                        `08 • ⚠️ *NADA DE SUPLANTACIONES*\n` +
-                        `Está prohibido hacerse pasar por otro vendedor, ` +
-                        `administrador o miembro.\n\n` +
-
-                        `09 • 🛡️ *ADMINISTRACIÓN*\n` +
-                        `La administración puede eliminar publicaciones ` +
-                        `o expulsar usuarios que incumplan las reglas.\n\n` +
-
-                        `10 • 📌 *RESPONSABILIDAD*\n` +
-                        `Cada comprador y vendedor debe verificar el trato ` +
-                        `antes de realizar cualquier pago.\n\n` +
-
-                        `━━━━━━━━━━━━━━━━━━\n\n` +
-
-                        `🖤 *CODM BLACK MARKET VERIFIED*\n` +
-                        `🔥 Compra • Venta • Intercambio\n` +
-                        `🛡️ Respeto • Transparencia • Comunidad`;
-
-
-                    await sock.sendMessage(
-                        chatId,
-                        {
-                            text: reglas
-                        },
-                        {
-                            quoted: msg
-                        }
+                    console.log(
+                        '📩 MENSAJE RECIBIDO'
                     );
+
+                    console.log(
+                        `🆔 CHAT: ${chatId}`
+                    );
+
+                    console.log(
+                        `📝 TEXTO: ${text}`
+                    );
+
+
+                    if (
+                        !grupoAutorizado(
+                            chatId
+                        )
+                    ) {
+
+                        console.log(
+                            `🚫 GRUPO NO AUTORIZADO: ${chatId}`
+                        );
+
+                        continue;
+                    }
+
+
+                    const comando =
+                        text.toLowerCase();
+
+
+                    // ==================================
+                    // !REGLAS
+                    // ==================================
+
+                    if (
+                        comando === '!reglas'
+                    ) {
+
+                        await enviarReglas(
+                            sock,
+                            chatId,
+                            msg
+                        );
+
+
+                        console.log(
+                            '✅ REGLAS ENVIADAS'
+                        );
+                    }
                 }
+
 
             } catch (error) {
 
                 console.error(
-                    "❌ Error procesando mensaje:",
+                    '❌ ERROR PROCESANDO MENSAJE:',
                     error?.message || error
                 );
             }
@@ -513,15 +721,17 @@ async function iniciarBot() {
 
 
 // ======================================================
-// ARRANCAR BOT
+// ARRANCAR
 // ======================================================
 
 iniciarBot().catch(
     (error) => {
 
         console.error(
-            "❌ Error iniciando el bot:",
+            '❌ ERROR INICIANDO BOT:',
             error?.message || error
         );
+
+        process.exitCode = 1;
     }
 );
